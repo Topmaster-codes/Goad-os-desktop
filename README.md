@@ -285,5 +285,6 @@ Open-source software does not automatically grant permission to use another proj
 **A different less stupider approach to the Linux desktop.**
 
 *Goad-OS Linux — Currently in Beta.*
+*(copywrite pending)*
 
 </div>
