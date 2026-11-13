@@ -1,4 +1,3 @@
--- SPDX-License-Identifier: GPL-3.0-or-later
 -- Deep Current: Amane integration for Hyprland 0.55+ Lua configuration.
 -- This is loaded from ~/.config/hypr/hyprland.lua with require("deep-current").
 

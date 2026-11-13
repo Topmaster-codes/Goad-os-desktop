@@ -1,5 +1,3 @@
--- SPDX-License-Identifier: GPL-3.0-or-later
-
 ---------------------
 ---- MY PROGRAMS ----
 ---------------------
@@ -96,6 +94,8 @@ hl.bind("XF86AudioPause", hl.dsp.exec_cmd("playerctl play-pause"), { locked = tr
 hl.bind("XF86AudioPlay",  hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
 hl.bind("XF86AudioPrev",  hl.dsp.exec_cmd("playerctl previous"),   { locked = true })
 
+-- screenshots
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd("hyprshot -m window"))
 
 --------------------------------
 ---- WINDOWS AND WORKSPACES ----
