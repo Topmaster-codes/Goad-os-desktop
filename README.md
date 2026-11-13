@@ -2,7 +2,7 @@
 
 <img width="1920" height="1080" alt="Aura" src="https://github.com/user-attachments/assets/477a67a4-7980-4d59-8e80-c17c04e1e3a8" />
 
-## PLEASE if you have any ideas for new logo designs that you would like to donate TELL ME, I whipped ts up in canva in like three seconds
+## PLEASE if you have any ideas for new logo designs that you would like to donate TELL ME, I whipped ts up in canva in like three seconds (and now it wont load in github)
 
 ### A Rust-powered desktop. Built on Hyprland. Powered by CachyOS. 
 
