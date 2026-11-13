@@ -1,4 +1,4 @@
-# Goad-OS Linux
+# Goad-OS Linux©
 
 <img width="1920" height="1080" alt="Aura" src="https://github.com/user-attachments/assets/477a67a4-7980-4d59-8e80-c17c04e1e3a8" />
 
@@ -6,7 +6,7 @@
 
 ### A Rust-powered desktop. Built on Hyprland. Powered by CachyOS. 
 
-**Goad-OS** is an experimental, CachyOS-based Linux distribution built on the Arch Linux ecosystem built on another experimental project (Amane). It combines the flexibility and performance of an Arch-based system with a carefully designed desktop experience powered by **Hyprland, Amane, Rust, and Rofi** with a soon to be coming **Siri like local assistant**. With an emphasis on performance using the linux-cachyos-bore-lto linux kernel!
+**Goad-OS©** is an experimental, CachyOS-based Linux distribution built on the Arch Linux ecosystem built on another experimental project (Amane). It combines the flexibility and performance of an Arch-based system with a carefully designed desktop experience powered by **Hyprland, Amane, Rust, and Rofi** with a soon to be coming **Siri like local assistant**. With an emphasis on performance using the linux-cachyos-bore-lto linux kernel!
 
 This repository right now is nothing more than a collection of configurations, Goad-OS will an attempt to create a distinctive Linux desktop with its own identity, workflow, and philosophy. (Type shit twin!)
 
