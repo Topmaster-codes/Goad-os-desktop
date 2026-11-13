@@ -151,7 +151,7 @@ From a Git checkout:
 ./bundle.sh
 ```
 
-Copy the resulting `goad-os-amane.tar.gz` to the target machine, extract it, enter the extracted project directory, and run `./install.sh`. Review the installation guide before running it; the project is experimental and currently targets a compatible CachyOS/Arch + Hyprland setup.
+Copy the resulting `goad-os-amane.7z` to the target machine, extract it, enter the extracted project directory, and run `./install.sh` in ./config/amane. Review the installation guide before running it; the project is experimental and currently targets a compatible CachyOS/Arch + Hyprland setup.
 
 No official bootable ISO or tagged binary release is published by this repository at this time.
 
