@@ -278,7 +278,7 @@ Open-source software does not automatically grant permission to use another proj
 
 <div align="center">
 
-# GOAD-OS
+# GOAD-OS©
 
 ### Built with Rust. Powered by CachyOS. Driven by Hyprland.
 
