@@ -162,12 +162,11 @@ No official bootable ISO or tagged binary release is published by this repositor
 Goad-os as ive been repeating is an evolving project. The following areas represent current development priorities and long-term goals.
 
 ### Desktop Experience
-- [ ] Establish a stable beta foundation.
-- [ ] Improve Amane desktop shell integration.
-- [ ] Refine the Rust-powered desktop interface.
+- [ ] Establish a stableish beta foundation.
+- [ ] Improve Amane desktop shell integration (actual settings menus and option permience).
 - [ ] Improve Rofi menu integration and consistency.
 - [ ] Refine the Hyprland desktop experience.
-- [ ] Develop a cohesive visual identity.
+- [ ] Develop a cohesive themeing engine.
 
 ### System Integration
 - [ ] Improve system configuration and usability.
@@ -177,17 +176,18 @@ Goad-os as ive been repeating is an evolving project. The following areas repres
 - [ ] Improve the installation experience.
 
 ### AI & Intelligent Features
-- [ ] Develop the GoaDOS desktop assistant.
-- [ ] Explore voice-based desktop interaction.
-- [ ] Integrate intelligent system assistance.
+- [ ] Develop the Goad-OS desktop assistant.
+- [ ] Finish voice-based desktop interaction.
+- [ ] Integrate intelligentish system assistance.
 
 ### Community & Release
+- [ ] Get a discord server up and running
 - [ ] Expand project documentation.
 - [ ] Improve contributor documentation.
 - [ ] Establish a consistent release process.
 - [ ] Work toward a stable public release.
 
-**Note:** Roadmap items represent development goals. They are not guarantees of availability in any particular release.
+**Note:** Roadmap items represent development goals. They are not guarantees of availability in any particular release, I am one hypergamous diddy larper after all.
 
 ---
 
@@ -197,7 +197,7 @@ Found a bug? Have an idea for a new feature? Want to suggest an improvement?
 
 Feedback and bug reports are appreciated.
 
-Please submit issues through the project's GitHub repository.
+Please submit issues through the project's GitHub repository, Ive always hated it when devs put it through discord threads.
 
 When reporting a bug, include as much of the following information as possible:
 
@@ -229,7 +229,7 @@ Whether you're interested in:
 - AI and voice assistants.
 - Testing and documentation.
 
-Your contributions can help shape the future of Goad-OS.
+Your contributions can help shape the future of Goad-OS (and help me finish ts).
 
 For significant changes, please open an issue or discussion before submitting a pull request.
 
@@ -282,7 +282,7 @@ Open-source software does not automatically grant permission to use another proj
 
 ### Built with Rust. Powered by CachyOS. Driven by Hyprland.
 
-**A different approach to the Linux desktop.**
+**A different less stupider approach to the Linux desktop.**
 
 *Goad-OS Linux — Currently in Beta.*
 
