@@ -284,6 +284,6 @@ Open-source software does not automatically grant permission to use another proj
 
 **A different approach to the Linux desktop.**
 
-*GoaDOS Linux — Currently in Beta.*
+*Goad-OS Linux — Currently in Beta.*
 
 </div>
