@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+AMANE_DIR="$CONFIG_HOME/amane"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/amane}"
+mkdir -p "$RUNTIME_DIR"
+
+# Apply the saved palette before starting Amane so it starts with the right
+# colors instead of needing a second launch during login.
+"$AMANE_DIR/scripts/apply-theme" >>"$RUNTIME_DIR/mako.log" 2>&1 || true
+
+# Restore the selected X11 primary output and workspace 1's monitor rule.
+if [[ -x "$AMANE_DIR/scripts/monitor-manager-menu" ]]; then
+    "$AMANE_DIR/scripts/monitor-manager-menu" --apply-saved \
+        >>"$RUNTIME_DIR/main-monitor.log" 2>&1 &
+    disown "$!" 2>/dev/null || true
+fi
+
+# Start the installed bar once per login session.
+AMANE_BIN="${XDG_BIN_HOME:-$HOME/.local/bin}/amane-shell"
+if [[ -x "$AMANE_BIN" ]] && ! pgrep -u "${UID:-$(id -u)}" -x amane-shell >/dev/null 2>&1; then
+    "$AMANE_BIN" >>"$RUNTIME_DIR/amane-shell.log" 2>&1 &
+    disown "$!" 2>/dev/null || true
+fi
+
+# Clean up a tray-only Waybar instance left by the previous Amane setup.
+TRAY_PID_FILE="$RUNTIME_DIR/amane-tray.pid"
+if [[ -r "$TRAY_PID_FILE" ]]; then
+    tray_pid="$(<"$TRAY_PID_FILE")"
+    if [[ "$tray_pid" =~ ^[0-9]+$ ]] && kill -0 "$tray_pid" 2>/dev/null; then
+        tray_command="$(ps -p "$tray_pid" -o args= 2>/dev/null || true)"
+        if [[ "$tray_command" == *"waybar-tray.jsonc"* ]]; then
+            kill "$tray_pid" 2>/dev/null || true
+        fi
+    fi
+    rm -f "$TRAY_PID_FILE"
+fi
+
+if command -v hyprpaper >/dev/null 2>&1 && ! pgrep -u "${UID:-$(id -u)}" -x hyprpaper >/dev/null 2>&1; then
+    hyprpaper >>"$RUNTIME_DIR/hyprpaper.log" 2>&1 &
+    disown "$!" 2>/dev/null || true
+fi
+
+# Restore the global fallback first, then per-monitor choices override it.
+WALLPAPER_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/amane/wallpaper"
+MONITOR_WALLPAPER_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/amane/wallpapers-by-monitor"
+SAVED_MONITOR_STATE="$(find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+if { [[ -r "$WALLPAPER_STATE" ]] || [[ -n "$SAVED_MONITOR_STATE" ]]; } \
+    && command -v hyprpaper >/dev/null 2>&1 \
+    && command -v hyprctl >/dev/null 2>&1; then
+    # Hyprpaper's IPC socket may appear several seconds after its process.
+    ready=0
+    for _attempt in {1..60}; do
+        if hyprctl hyprpaper listactive >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 0.5
+    done
+
+    if (( ready == 0 )); then
+        printf 'Could not restore saved wallpapers: Hyprpaper IPC did not become available.\n' \
+            >>"$RUNTIME_DIR/hyprpaper.log"
+    else
+        if [[ -r "$WALLPAPER_STATE" ]]; then
+            wallpaper="$(<"$WALLPAPER_STATE" 2>/dev/null || true)"
+            if [[ -f "$wallpaper" ]]; then
+                if ! hyprctl hyprpaper wallpaper ",${wallpaper},cover" >>"$RUNTIME_DIR/hyprpaper.log" 2>&1; then
+                    printf 'Could not restore fallback wallpaper: %s\n' "$wallpaper" \
+                        >>"$RUNTIME_DIR/hyprpaper.log"
+                fi
+            else
+                printf 'Saved wallpaper is missing: %s\n' "$wallpaper" >>"$RUNTIME_DIR/hyprpaper.log"
+            fi
+        fi
+
+        if [[ -d "$MONITOR_WALLPAPER_STATE_DIR" ]] \
+            && command -v jq >/dev/null 2>&1; then
+            monitors="$(hyprctl -j monitors 2>/dev/null || true)"
+            while IFS= read -r -d '' monitor_state; do
+                monitor="${monitor_state##*/}"
+                wallpaper="$(<"$monitor_state" 2>/dev/null || true)"
+                [[ "$monitor" =~ ^[A-Za-z0-9_.:-]+$ ]] || continue
+                if [[ ! -f "$wallpaper" ]]; then
+                    printf 'Saved wallpaper for %s is missing: %s\n' "$monitor" "$wallpaper" \
+                        >>"$RUNTIME_DIR/hyprpaper.log"
+                    continue
+                fi
+                if ! jq -e --arg monitor "$monitor" 'any(.[]; .name == $monitor)' \
+                    <<<"$monitors" >/dev/null 2>&1; then
+                    printf 'Saved wallpaper monitor is not connected: %s\n' "$monitor" \
+                        >>"$RUNTIME_DIR/hyprpaper.log"
+                    continue
+                fi
+                if ! hyprctl hyprpaper wallpaper "${monitor},${wallpaper},cover" \
+                    >>"$RUNTIME_DIR/hyprpaper.log" 2>&1; then
+                    printf 'Could not restore wallpaper for %s: %s\n' "$monitor" "$wallpaper" \
+                        >>"$RUNTIME_DIR/hyprpaper.log"
+                fi
+            done < <(find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -print0 2>/dev/null)
+        fi
+    fi
+fi

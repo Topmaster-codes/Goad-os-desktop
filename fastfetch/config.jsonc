@@ -1,0 +1,50 @@
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    "logo": {
+        "type": "file",
+        "source": "~/.config/fastfetch/goad-os.txt",
+        "color": {
+            "1": "#1e7a98",
+            "2": "#62b7c9"
+        },
+        "padding": {
+            "right": 3
+        }
+    },
+    "display": {
+        "separator": "  →  ",
+        "color": {
+            "keys": "#84b1bc",
+            "title": "#dcf1f5",
+            "separator": "#1e7a98"
+        },
+        "key": {
+            "width": 12
+        }
+    },
+    "modules": [
+        "title",
+        {
+            "type": "custom",
+            "format": "Goad OS  •  CachyOS-based",
+            "outputColor": "#62b7c9"
+        },
+        "separator",
+        {
+            "type": "os",
+            "key": "Base OS"
+        },
+        "host",
+        "kernel",
+        "uptime",
+        "packages",
+        "shell",
+        "display",
+        "de",
+        "wm",
+        "terminal",
+        "cpu",
+        "gpu",
+        "memory"
+    ]
+}

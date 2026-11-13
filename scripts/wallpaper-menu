@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+WALLPAPER_DIR="${HOME:?HOME is not set}/Pictures/wallpapers"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/amane"
+THEME_STATE="$STATE_DIR/theme"
+WALLPAPER_STATE="$STATE_DIR/wallpaper"
+MONITOR_WALLPAPER_STATE_DIR="$STATE_DIR/wallpapers-by-monitor"
+
+notify() {
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Wallpaper picker" "$1"
+    else
+        printf 'Wallpaper picker: %s\n' "$1" >&2
+    fi
+}
+
+save_state() {
+    local destination="$1" value="$2" temporary="$1.tmp.$$"
+    if ! mkdir -p -- "$(dirname -- "$destination")" \
+        || ! printf '%s\n' "$value" >"$temporary" \
+        || ! mv -f -- "$temporary" "$destination"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+}
+
+if ! command -v rofi-wayland >/dev/null 2>&1 && ! command -v rofi >/dev/null 2>&1; then
+    notify "Rofi is not installed. Install rofi-wayland for native Wayland support."
+    exit 1
+fi
+
+current_theme="$(<"$THEME_STATE" 2>/dev/null || true)"
+if [[ "$current_theme" == "ragebait-red" ]]; then
+    blue_label="Theme: Default Blue"
+    red_label="Theme: Ragebait Red (current)"
+else
+    blue_label="Theme: Default Blue (current)"
+    red_label="Theme: Ragebait Red"
+fi
+
+choice="$(printf '%s\n' "Wallpaper: All monitors" "Wallpaper: One monitor" "$blue_label" "$red_label" \
+    | "$SCRIPT_DIR/rofi-single" -dmenu -format s -p "Wallpaper & theme" -l 6 || true)"
+[[ -n "$choice" ]] || exit 0
+
+case "$choice" in
+    "Theme: Default Blue"|"Theme: Default Blue (current)")
+        if save_state "$THEME_STATE" "default-blue"; then
+            if "$SCRIPT_DIR/apply-theme"; then
+                notify "Switched to the default blue theme."
+            else
+                notify "The blue theme was saved, but Mako could not be updated."
+            fi
+            exec "$SCRIPT_DIR/wallpaper-menu"
+        else
+            notify "Could not save the theme choice. Check permissions for $STATE_DIR."
+            exit 1
+        fi
+        exit 0
+        ;;
+    "Theme: Ragebait Red"|"Theme: Ragebait Red (current)")
+        if save_state "$THEME_STATE" "ragebait-red"; then
+            if "$SCRIPT_DIR/apply-theme"; then
+                notify "Switched to the ragebait red theme."
+            else
+                notify "The ragebait red theme was saved, but Mako could not be updated."
+            fi
+            exec "$SCRIPT_DIR/wallpaper-menu"
+        else
+            notify "Could not save the theme choice. Check permissions for $STATE_DIR."
+            exit 1
+        fi
+        exit 0
+        ;;
+    "Wallpaper: All monitors") target_monitor='' ;;
+    "Wallpaper: One monitor")
+        monitor_json="$(hyprctl -j monitors 2>/dev/null || true)"
+        if ! jq -e 'type == "array" and length > 0' <<<"$monitor_json" >/dev/null 2>&1; then
+            notify 'Hyprland did not report any active monitors.'
+            exit 1
+        fi
+        declare -a monitor_names=() monitor_labels=()
+        while IFS=$'\t' read -r monitor_name description focused; do
+            [[ "$monitor_name" =~ ^[A-Za-z0-9_.:-]+$ ]] || continue
+            monitor_state="$MONITOR_WALLPAPER_STATE_DIR/$monitor_name"
+            current_wallpaper="$(<"$monitor_state" 2>/dev/null || true)"
+            marker=''
+            if [[ -n "$current_wallpaper" ]]; then
+                marker="  [$(basename -- "$current_wallpaper")]"
+            elif [[ "$focused" == true ]]; then
+                marker='  [focused]'
+            fi
+            monitor_names+=("$monitor_name")
+            monitor_labels+=("$monitor_name — $description$marker")
+        done < <(jq -r '.[] | [.name, (.description // .name), (.focused // false)] | @tsv' <<<"$monitor_json")
+        if ((${#monitor_names[@]} == 0)); then
+            notify 'No usable monitor names were returned by Hyprland.'
+            exit 1
+        fi
+        monitor_choice="$(printf '%s\n' "${monitor_labels[@]}" \
+            | "$SCRIPT_DIR/rofi-single" -dmenu -format s -p 'Choose monitor' -l "${#monitor_labels[@]}" || true)"
+        [[ -n "$monitor_choice" ]] || exit 0
+        target_monitor=''
+        for monitor_index in "${!monitor_labels[@]}"; do
+            if [[ "${monitor_labels[$monitor_index]}" == "$monitor_choice" ]]; then
+                target_monitor="${monitor_names[$monitor_index]}"
+                break
+            fi
+        done
+        if [[ -z "$target_monitor" ]]; then
+            notify 'The selected monitor is no longer available.'
+            exit 1
+        fi
+        ;;
+    *) exit 0 ;;
+esac
+
+if ! command -v hyprctl >/dev/null 2>&1; then
+    notify "hyprctl was not found. Wallpaper selection requires Hyprland and Hyprpaper."
+    exit 1
+fi
+
+if ! mkdir -p -- "$WALLPAPER_DIR"; then
+    notify "Could not create $WALLPAPER_DIR. Check the directory permissions."
+    exit 1
+fi
+
+declare -a files=() labels=()
+while IFS= read -r -d '' file; do
+    case "${file,,}" in
+        *.png|*.jpg|*.jpeg|*.webp|*.bmp|*.avif)
+            files+=("$file")
+            labels+=("${file#"$WALLPAPER_DIR"/}")
+            ;;
+    esac
+done < <(find "$WALLPAPER_DIR" -type f -print0 2>/dev/null)
+
+if ((${#files[@]} == 0)); then
+    notify "No supported images found in $WALLPAPER_DIR. Add PNG, JPG, WebP, BMP, or AVIF files."
+    exit 0
+fi
+
+if [[ -z "$target_monitor" ]]; then
+    wallpaper_prompt='Wallpaper for all monitors'
+else
+    wallpaper_prompt="Wallpaper for $target_monitor"
+fi
+choice="$(printf '%s\n' "${labels[@]}" | "$SCRIPT_DIR/rofi-single" -dmenu -format s \
+    -p "$wallpaper_prompt" -l 10 || true)"
+[[ -n "$choice" ]] || exit 0
+
+selected=""
+for i in "${!labels[@]}"; do
+    if [[ "${labels[$i]}" == "$choice" ]]; then
+        selected="${files[$i]}"
+        break
+    fi
+done
+if [[ -z "$selected" || ! -f "$selected" ]]; then
+    notify "The selected image is no longer available."
+    exit 1
+fi
+
+if ! pgrep -u "${UID:-$(id -u)}" -x hyprpaper >/dev/null 2>&1; then
+    if ! command -v hyprpaper >/dev/null 2>&1; then
+        notify "Hyprpaper is not installed."
+        exit 1
+    fi
+    RUNTIME_DIR="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/amane}"
+    mkdir -p "$RUNTIME_DIR"
+    hyprpaper >>"$RUNTIME_DIR/hyprpaper.log" 2>&1 &
+    disown "$!" 2>/dev/null || true
+    sleep 1
+fi
+
+if [[ -n "$target_monitor" ]]; then
+    if hyprctl hyprpaper wallpaper "${target_monitor},${selected},cover" >/dev/null 2>&1; then
+        if ! save_state "$MONITOR_WALLPAPER_STATE_DIR/$target_monitor" "$selected"; then
+            notify "Wallpaper changed on $target_monitor, but the selection could not be saved."
+            exit 1
+        fi
+        notify "Wallpaper changed on $target_monitor to ${labels[$i]} and saved."
+    else
+        notify "Hyprpaper could not apply the wallpaper to $target_monitor. Check that Hyprpaper is running."
+        exit 1
+    fi
+else
+    monitor_json="$(hyprctl -j monitors 2>/dev/null || true)"
+    if ! jq -e 'type == "array" and length > 0' <<<"$monitor_json" >/dev/null 2>&1; then
+        notify 'Hyprland did not report any active monitors.'
+        exit 1
+    fi
+    mapfile -t active_monitors < <(jq -r '.[].name' <<<"$monitor_json")
+    if ! hyprctl hyprpaper wallpaper ",${selected},cover" >/dev/null 2>&1; then
+        notify 'Hyprpaper could not set the fallback wallpaper. Check that Hyprpaper is running.'
+        exit 1
+    fi
+    for monitor_name in "${active_monitors[@]}"; do
+        if ! hyprctl hyprpaper wallpaper "${monitor_name},${selected},cover" >/dev/null 2>&1; then
+            notify "Wallpaper applied partially; Hyprpaper could not update $monitor_name."
+            exit 1
+        fi
+    done
+    if ! save_state "$WALLPAPER_STATE" "$selected"; then
+        notify 'Wallpaper changed, but the selection could not be saved for the next login.'
+        exit 1
+    fi
+    if [[ -d "$MONITOR_WALLPAPER_STATE_DIR" ]]; then
+        find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -delete
+    fi
+    notify "Wallpaper changed on all monitors to ${labels[$i]} and saved."
+fi

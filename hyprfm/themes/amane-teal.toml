@@ -1,0 +1,20 @@
+# Amane dark teal palette, matched to the shell, Rofi, and Mako.
+[colors]
+base    = "#0a2832"
+mantle  = "#103c48"
+crust   = "#061a20"
+surface = "#164c58"
+overlay = "#1e7a98"
+text    = "#dcf1f5"
+subtext = "#b1d3da"
+muted   = "#84b1bc"
+accent  = "#1e7a98"
+success = "#7fc6a4"
+warning = "#e6b86c"
+error   = "#e58b74"
+
+[terminal]
+palette = [
+    "#103c48", "#e58b74", "#7fc6a4", "#e6b86c", "#1e7a98", "#bd91bd", "#62b7c9", "#dcf1f5",
+    "#164c58", "#ef9c84", "#91d4b4", "#f0c67e", "#3b91ac", "#cca0ca", "#79c7d6", "#eef8fa",
+]

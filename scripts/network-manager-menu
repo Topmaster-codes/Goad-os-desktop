@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROFI_SINGLE="$SCRIPT_DIR/rofi-single"
+
+notify() {
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Systemd network" "$1"
+    else
+        printf 'Systemd network: %s\n' "$1" >&2
+    fi
+}
+
+if ! command -v networkctl >/dev/null 2>&1; then
+    notify "networkctl was not found. Install systemd-networkd."
+    exit 1
+fi
+if ! systemctl is-active --quiet systemd-networkd.service; then
+    notify "systemd-networkd.service is not active."
+    exit 1
+fi
+if ! listing="$(networkctl --no-pager --no-legend list 2>/dev/null)"; then
+    notify "Could not read systemd-networkd links."
+    exit 1
+fi
+
+declare -a interfaces=() labels=()
+while read -r index iface kind state setup _; do
+    [[ "$index" =~ ^[0-9]+$ && "$iface" =~ ^[[:alnum:]_.:-]+$ ]] || continue
+    interfaces+=("$iface")
+    labels+=("$iface  ·  $kind  ·  $state  ·  $setup")
+done <<< "$listing"
+
+if ((${#interfaces[@]} == 0)); then
+    notify "systemd-networkd has no managed links to show."
+    exit 0
+fi
+
+selected="$(printf '%s\n' "${labels[@]}" | "$ROFI_SINGLE" -dmenu \
+    -p "Network links" -l 10 || true)"
+[[ -n "$selected" ]] || exit 0
+
+index=-1
+for i in "${!labels[@]}"; do
+    if [[ "${labels[$i]}" == "$selected" ]]; then
+        index="$i"
+        break
+    fi
+done
+((index >= 0)) || exit 1
+iface="${interfaces[$index]}"
+
+actions=("Show link status" "Renew DHCP lease" "Reconfigure link" "Bring link up" "Bring link down")
+action="$(printf '%s\n' "${actions[@]}" | "$ROFI_SINGLE" -dmenu \
+    -p "$iface" -l "${#actions[@]}" || true)"
+[[ -n "$action" ]] || exit 0
+
+if [[ "$action" == "Show link status" ]]; then
+    status="$(networkctl --no-pager --full status "$iface" 2>&1 || true)"
+    [[ -n "$status" ]] && printf '%s\n' "$status" | "$ROFI_SINGLE" -dmenu \
+        -p "$iface status" -l 10 || true
+    exit 0
+fi
+
+case "$action" in
+    "Renew DHCP lease") operation=renew ;;
+    "Reconfigure link") operation=reconfigure ;;
+    "Bring link up") operation=up ;;
+    "Bring link down") operation=down ;;
+    *) exit 1 ;;
+esac
+
+if ! command -v pkexec >/dev/null 2>&1; then
+    notify "Install PolicyKit (pkexec) to control network links from this menu."
+    exit 1
+fi
+if output="$(pkexec networkctl "$operation" "$iface" 2>&1)"; then
+    notify "$iface: $operation completed."
+else
+    message="${output:-The request was cancelled or denied.}"
+    notify "$iface: $message"
+    exit 1
+fi

@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/amane"
+MONITOR_STATE="$STATE_DIR/main-monitor"
+APPLY_ERROR=''
+
+notify() {
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Main monitor" "$1"
+    else
+        printf 'Main monitor: %s\n' "$1" >&2
+    fi
+}
+
+hypr_monitor_exists() {
+    local monitor="$1" output
+    output="$(hyprctl -j monitors 2>/dev/null)" || return 1
+    jq -e --arg monitor "$monitor" 'any(.[]; .name == $monitor)' <<<"$output" >/dev/null
+}
+
+save_monitor_state() {
+    local monitor="$1" temporary="$MONITOR_STATE.tmp.$$"
+    mkdir -p -- "$STATE_DIR" || return 1
+    if ! printf '%s\n' "$monitor" >"$temporary" \
+        || ! mv -f -- "$temporary" "$MONITOR_STATE"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+}
+
+apply_monitor() {
+    local monitor="$1" reload_rule="${2:-false}" workspaces
+    if [[ ! "$monitor" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+        APPLY_ERROR="Unsupported monitor name: $monitor"
+        return 1
+    fi
+    if ! hypr_monitor_exists "$monitor"; then
+        APPLY_ERROR="Hyprland monitor is not connected: $monitor"
+        return 1
+    fi
+
+    # XRandR's primary flag serves X11/XWayland applications.
+    if ! xrandr --output "$monitor" --primary >/dev/null 2>&1; then
+        APPLY_ERROR="Could not mark $monitor as the X11 primary output. Check that XWayland exposes this output name."
+        return 1
+    fi
+
+    # The selected monitor is read by deep-current.lua. Reloading replaces its
+    # previous workspace rule instead of accumulating conflicting runtime rules.
+    if [[ "$reload_rule" == true ]] && ! hyprctl reload >/dev/null; then
+        APPLY_ERROR="X11 primary changed, but Hyprland could not reload the workspace 1 rule for $monitor."
+        return 1
+    fi
+
+    workspaces="$(hyprctl -j workspaces 2>/dev/null || true)"
+    if jq -e 'any(.[]; .id == 1)' <<<"$workspaces" >/dev/null 2>&1; then
+        if ! hyprctl eval "hl.dispatch(hl.dsp.workspace.move({ workspace = \"1\", monitor = \"$monitor\" }))" >/dev/null; then
+            APPLY_ERROR="X11 primary changed, but Hyprland could not move workspace 1 to $monitor."
+            return 1
+        fi
+        workspaces="$(hyprctl -j workspaces 2>/dev/null || true)"
+        if ! jq -e --arg monitor "$monitor" 'any(.[]; .id == 1 and .monitor == $monitor)' <<<"$workspaces" >/dev/null 2>&1; then
+            APPLY_ERROR="Hyprland did not place workspace 1 on $monitor after the move command."
+            return 1
+        fi
+    fi
+    APPLY_ERROR=''
+}
+
+if [[ "${1:-}" == "--apply-saved" ]]; then
+    monitor="$(<"$MONITOR_STATE" 2>/dev/null || true)"
+    [[ -n "$monitor" ]] || exit 0
+    for _attempt in {1..40}; do
+        if apply_monitor "$monitor" false; then
+            printf 'Restored main monitor: %s\n' "$monitor"
+            exit 0
+        fi
+        sleep 0.5
+    done
+    printf 'Could not restore saved main monitor: %s (%s)\n' "$monitor" "$APPLY_ERROR" >&2
+    exit 1
+fi
+
+if ! command -v hyprctl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    notify 'hyprctl and jq are required to list Hyprland monitors.'
+    exit 1
+fi
+if ! command -v xrandr >/dev/null 2>&1; then
+    notify 'xrandr is required to set the X11 primary monitor. Install xorg-xrandr.'
+    exit 1
+fi
+
+monitor_json="$(hyprctl -j monitors 2>/dev/null || true)"
+if ! jq -e 'type == "array" and length > 0' <<<"$monitor_json" >/dev/null 2>&1; then
+    notify 'Hyprland did not report any active monitors.'
+    exit 1
+fi
+
+xrandr_json="$(xrandr --query 2>/dev/null || true)"
+if [[ -z "$xrandr_json" ]]; then
+    notify 'Could not query XWayland outputs. Check that DISPLAY and XWayland are available.'
+    exit 1
+fi
+mapfile -t xrandr_outputs < <(awk '$2 == "connected" { print $1 }' <<<"$xrandr_json")
+xrandr_primary="$(awk '$2 == "connected" { for (i = 3; i <= NF; i++) if ($i == "primary") { print $1; exit } }' <<<"$xrandr_json")"
+
+saved_monitor="$(<"$MONITOR_STATE" 2>/dev/null || true)"
+declare -a monitor_names=() labels=()
+while IFS=$'\t' read -r name description focused; do
+    [[ -n "$name" ]] || continue
+    if ! printf '%s\n' "${xrandr_outputs[@]}" | grep -Fqx -- "$name"; then
+        continue
+    fi
+    suffix=''
+    if [[ "$name" == "$saved_monitor" || "$name" == "$xrandr_primary" ]]; then
+        suffix='  [main]'
+    elif [[ "$focused" == true ]]; then
+        suffix='  [focused]'
+    fi
+    monitor_names+=("$name")
+    labels+=("$name — $description$suffix")
+done < <(jq -r '.[] | [.name, (.description // .name), (.focused // false)] | @tsv' <<<"$monitor_json")
+
+if ((${#monitor_names[@]} == 0)); then
+    if ((${#xrandr_outputs[@]} == 0)); then
+        notify 'XWayland has no connected XRandR outputs.'
+    else
+        notify 'Hyprland and XRandR output names do not match, so a primary monitor cannot be selected safely.'
+    fi
+    exit 1
+fi
+
+choice="$(printf '%s\n' "${labels[@]}" \
+    | "$SCRIPT_DIR/rofi-single" -dmenu -format s -p 'Main monitor' -l "${#labels[@]}" || true)"
+[[ -n "$choice" ]] || exit 0
+
+selected=''
+for i in "${!labels[@]}"; do
+    if [[ "${labels[$i]}" == "$choice" ]]; then
+        selected="${monitor_names[$i]}"
+        break
+    fi
+done
+if [[ -z "$selected" ]]; then
+    notify 'The selected monitor is no longer available.'
+    exit 1
+fi
+
+previous_monitor="$(<"$MONITOR_STATE" 2>/dev/null || true)"
+if ! save_monitor_state "$selected"; then
+    notify 'Could not save the selected monitor preference.'
+    exit 1
+fi
+
+if ! apply_monitor "$selected" true; then
+    apply_error="$APPLY_ERROR"
+    if [[ -n "$previous_monitor" ]]; then
+        save_monitor_state "$previous_monitor" || true
+    else
+        rm -f -- "$MONITOR_STATE"
+    fi
+    hyprctl reload >/dev/null 2>&1 || true
+    if [[ -n "$previous_monitor" ]]; then
+        apply_monitor "$previous_monitor" false || true
+    fi
+    notify "$apply_error"
+    exit 1
+fi
+
+notify "$selected is now the main monitor. Workspace 1 will default there."

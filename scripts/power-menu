@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROFI_SINGLE="$SCRIPT_DIR/rofi-single"
+
+notify() {
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Power" "$1"
+    else
+        printf 'Power: %s\n' "$1" >&2
+    fi
+}
+
+if ! [[ -x "$ROFI_SINGLE" ]]; then
+    notify "Rofi is required for the power menu."
+    exit 1
+fi
+
+actions=("Lock screen" "Suspend" "Log out" "Restart" "Power off")
+choice="$(printf '%s\n' "${actions[@]}" | "$ROFI_SINGLE" -dmenu -p "Power" -l "${#actions[@]}" || true)"
+[[ -n "$choice" ]] || exit 0
+
+case "$choice" in
+    "Lock screen")
+        if command -v hyprlock >/dev/null 2>&1; then
+            if ! hyprlock; then
+                notify "Could not lock the session."
+                exit 1
+            fi
+        else
+            notify "hyprlock is not installed."
+            exit 1
+        fi
+        ;;
+    "Suspend") action_cmd=(systemctl suspend) ;;
+    "Log out") action_cmd=(hyprctl dispatch exit) ;;
+    "Restart") action_cmd=(systemctl reboot) ;;
+    "Power off") action_cmd=(systemctl poweroff) ;;
+    *) exit 1 ;;
+esac
+
+if [[ -n "${action_cmd+x}" ]]; then
+    if "${action_cmd[@]}"; then
+        exit 0
+    else
+        notify "Could not complete: $choice."
+        exit 1
+    fi
+fi

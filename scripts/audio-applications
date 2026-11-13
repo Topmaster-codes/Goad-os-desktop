@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""List active PipeWire playback apps as target-id, reference-node-id, label."""
+
+import json
+import subprocess
+import sys
+
+
+try:
+    result = subprocess.run(["pw-dump"], check=True, capture_output=True, text=True)
+    objects = json.loads(result.stdout)
+except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+    print(f"Could not query PipeWire streams: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+groups = {}
+for item in objects:
+    if item.get("type") != "PipeWire:Interface:Node":
+        continue
+    info = item.get("info") or {}
+    props = info.get("props") or {}
+    if not str(props.get("media.class", "")).startswith("Stream/Output/Audio"):
+        continue
+
+    node_id = item.get("id")
+    if not isinstance(node_id, int):
+        continue
+    pid = str(props.get("application.process.id", "")).strip()
+    app = str(
+        props.get("application.name")
+        or props.get("media.name")
+        or props.get("node.description")
+        or props.get("node.name")
+        or f"Audio stream {node_id}"
+    ).replace("\t", " ").replace("\n", " ")
+
+    if pid.isdigit() and int(pid) > 0:
+        target = f"pid:{pid}"
+    else:
+        target = f"node:{node_id}"
+    group = groups.setdefault(target, {"name": app, "reference": node_id, "count": 0})
+    group["count"] += 1
+
+for target, group in sorted(groups.items(), key=lambda entry: entry[1]["name"].casefold()):
+    name = group["name"]
+    if group["count"] > 1:
+        name += f" ({group['count']} streams)"
+    print(f"{target}\t{group['reference']}\t{name}")

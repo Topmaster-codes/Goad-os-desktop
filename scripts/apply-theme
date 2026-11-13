@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+AMANE_DIR="$CONFIG_HOME/amane"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/amane"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/amane}"
+THEME_STATE="$STATE_DIR/theme"
+ACTIVE_MAKO_CONFIG="$RUNTIME_DIR/mako.conf"
+KITTY_CONFIG_DIR="$CONFIG_HOME/kitty"
+KITTY_CONFIG="$KITTY_CONFIG_DIR/kitty.conf"
+ACTIVE_KITTY_CONFIG="$KITTY_CONFIG_DIR/amane-theme.conf"
+
+theme="$(<"$THEME_STATE" 2>/dev/null || true)"
+case "$theme" in
+    ragebait-red) source_config="$AMANE_DIR/mako-red.conf" ;;
+    *) source_config="$AMANE_DIR/mako.conf" ;;
+esac
+case "$theme" in
+    ragebait-red) kitty_source="$AMANE_DIR/kitty/themes/ragebait-red.conf" ;;
+    *) kitty_source="$AMANE_DIR/kitty/themes/default-blue.conf" ;;
+esac
+
+if command -v mako >/dev/null 2>&1 && [[ -r "$source_config" ]]; then
+    mkdir -p -- "$RUNTIME_DIR"
+    temporary="$ACTIVE_MAKO_CONFIG.tmp.$$"
+    if ! install -m 600 -- "$source_config" "$temporary" \
+        || ! mv -f -- "$temporary" "$ACTIVE_MAKO_CONFIG"; then
+        rm -f -- "$temporary"
+        exit 1
+    fi
+
+    mako_pid="$(pgrep -o -u "${UID:-$(id -u)}" -x mako 2>/dev/null || true)"
+    if [[ -n "$mako_pid" ]]; then
+        mako_command="$(ps -p "$mako_pid" -o args= 2>/dev/null || true)"
+        if [[ "$mako_command" == *"$ACTIVE_MAKO_CONFIG"* ]] \
+            && command -v makoctl >/dev/null 2>&1; then
+            makoctl reload
+        else
+            # A daemon started before this theme helper may still point at an
+            # old config path. Restart it to make later reloads use this file.
+            kill "$mako_pid" 2>/dev/null || true
+            for _attempt in {1..20}; do
+                pgrep -u "${UID:-$(id -u)}" -x mako >/dev/null 2>&1 || break
+                sleep 0.1
+            done
+            if pgrep -u "${UID:-$(id -u)}" -x mako >/dev/null 2>&1; then
+                printf 'Could not stop the existing Mako process to apply its theme.\n' >&2
+                exit 1
+            fi
+            mako --config "$ACTIVE_MAKO_CONFIG" >>"$RUNTIME_DIR/mako.log" 2>&1 &
+            disown "$!" 2>/dev/null || true
+        fi
+    else
+        mako --config "$ACTIVE_MAKO_CONFIG" >>"$RUNTIME_DIR/mako.log" 2>&1 &
+        disown "$!" 2>/dev/null || true
+    fi
+fi
+
+if [[ -r "$KITTY_CONFIG" ]] && grep -Fqx 'include amane-theme.conf' "$KITTY_CONFIG" \
+    && [[ -r "$kitty_source" ]]; then
+    kitty_temporary="$ACTIVE_KITTY_CONFIG.tmp.$$"
+    if install -m 644 -- "$kitty_source" "$kitty_temporary" \
+        && mv -f -- "$kitty_temporary" "$ACTIVE_KITTY_CONFIG"; then
+        while IFS= read -r kitty_pid; do
+            kill -USR1 "$kitty_pid" 2>/dev/null || true
+        done < <(pgrep -u "${UID:-$(id -u)}" -x kitty 2>/dev/null || true)
+    else
+        rm -f -- "$kitty_temporary"
+        printf 'Could not write Kitty theme file: %s\n' "$ACTIVE_KITTY_CONFIG" >&2
+    fi
+fi
+
+# Amane reads its palette when it starts. Restart the bar after a saved theme
+# change so its widgets immediately use the selected colors.
+AMANE_BIN="${XDG_BIN_HOME:-$HOME/.local/bin}/amane-shell"
+if [[ -x "$AMANE_BIN" ]]; then
+    amane_pid="$(pgrep -o -u "${UID:-$(id -u)}" -x amane-shell 2>/dev/null || true)"
+    if [[ -n "$amane_pid" ]]; then
+        kill "$amane_pid" 2>/dev/null || true
+        for _attempt in {1..20}; do
+            pgrep -u "${UID:-$(id -u)}" -x amane-shell >/dev/null 2>&1 || break
+            sleep 0.1
+        done
+    fi
+    if pgrep -u "${UID:-$(id -u)}" -x amane-shell >/dev/null 2>&1; then
+        printf 'Could not restart Amane to apply its selected palette.\n' >&2
+        exit 1
+    fi
+    "$AMANE_BIN" >>"$RUNTIME_DIR/amane-shell.log" 2>&1 &
+    disown "$!" 2>/dev/null || true
+fi

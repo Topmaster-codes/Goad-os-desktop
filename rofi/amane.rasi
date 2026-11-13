@@ -1,0 +1,85 @@
+configuration {
+    modi: "drun,run,window";
+    show-icons: true;
+    drun-display-format: "{name}";
+    display-drun: "Apps";
+    display-run: "Run";
+    display-window: "Windows";
+    font: "JetBrainsMono Nerd Font 10";
+}
+
+* {
+    background-color: #0a2830d9;
+    text-color: #d8edf1ff;
+}
+
+window {
+    location: north;
+    anchor: north;
+    y-offset: 40px;
+    width: 600px;
+    border: 1px;
+    border-color: #1e7a9896;
+    border-radius: 12px;
+    background-color: #0a2830d9;
+    padding: 12px;
+}
+
+mainbox {
+    orientation: vertical;
+    children: [ inputbar, listview ];
+    spacing: 10px;
+    background-color: transparent;
+}
+
+inputbar {
+    children: [ prompt, entry ];
+    spacing: 8px;
+    padding: 9px 12px;
+    border: 1px;
+    border-color: #1e7a9896;
+    border-radius: 8px;
+    background-color: #103c48d9;
+}
+
+prompt {
+    text-color: #1e7a98ff;
+    background-color: transparent;
+}
+
+entry {
+    text-color: #d8edf1ff;
+    background-color: transparent;
+}
+
+listview {
+    lines: 9;
+    fixed-height: false;
+    scrollbar: false;
+    spacing: 4px;
+    background-color: transparent;
+}
+
+element {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background-color: transparent;
+    text-color: @foreground;
+}
+
+element selected {
+    background-color: #1e7a987a;
+    text-color: #ffffffff;
+    border: 1px;
+    border-color: #62b7c98c;
+}
+
+element-icon {
+    size: 20px;
+    background-color: transparent;
+}
+
+element-text {
+    text-color: inherit;
+    background-color: transparent;
+}

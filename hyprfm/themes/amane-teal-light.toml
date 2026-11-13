@@ -1,0 +1,20 @@
+# Coordinated light mode for HyprFM's Dark Mode switch.
+[colors]
+base    = "#e8f4f5"
+mantle  = "#d8edf1"
+crust   = "#c5e1e6"
+surface = "#f4fafb"
+overlay = "#84b1bc"
+text    = "#12343c"
+subtext = "#315a64"
+muted   = "#537d87"
+accent  = "#176b86"
+success = "#287b59"
+warning = "#916017"
+error   = "#a94735"
+
+[terminal]
+palette = [
+    "#315a64", "#a94735", "#287b59", "#916017", "#176b86", "#87588b", "#247e91", "#12343c",
+    "#537d87", "#bd5d49", "#38946c", "#a9782b", "#23809e", "#9b6a9f", "#3295a8", "#071c21",
+]

@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROFI_SINGLE="$SCRIPT_DIR/rofi-single"
+
+notify() {
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Audio" "$1"
+    else
+        printf 'Audio: %s\n' "$1" >&2
+    fi
+}
+
+if ! [[ -x "$ROFI_SINGLE" ]]; then
+    notify "Rofi is required for the audio menu."
+    exit 1
+fi
+if ! command -v wpctl >/dev/null 2>&1; then
+    notify "wpctl was not found. Install PipeWire with WirePlumber."
+    exit 1
+fi
+
+choose_volume() {
+    local target_kind="$1" target="$2" reference_id="$3" name="$4"
+    local current value choice
+    current="$(wpctl get-volume "$reference_id" 2>/dev/null | awk '/Volume:/ { printf "%.0f", $2 * 100 }')"
+    local -a values=(0% 10% 25% 50% 75% 100% 125% 150%)
+    local -a options=()
+    for value in "${values[@]}"; do
+        if [[ "$value" == "${current}%" ]]; then
+            options+=("$value  (current)")
+        else
+            options+=("$value")
+        fi
+    done
+    choice="$(printf '%s\n' "${options[@]}" | "$ROFI_SINGLE" -dmenu -p "$name volume" -l "${#options[@]}" || true)"
+    [[ -n "$choice" ]] || return 0
+    value="${choice%% *}"
+
+    case "$target_kind" in
+        pid) wpctl set-volume --pid "$target" "$value" ;;
+        node) wpctl set-volume "$target" "$value" ;;
+        *) return 1 ;;
+    esac || { notify "Could not set volume for $name."; return 1; }
+}
+
+control_entity() {
+    local kind="$1" target="$2" reference_id="$3" name="$4" default_kind="${5:-}"
+    local current volume_info choice value
+    local -a actions
+
+    # This Rofi build exits after each accepted dmenu row. Reopen this same
+    # control menu after adjustments so repeated clicks stay on the device/app.
+    while true; do
+        volume_info="$(wpctl get-volume "$reference_id" 2>/dev/null || true)"
+        current="$(awk '/Volume:/ { printf "%.0f%%", $2 * 100 }' <<< "$volume_info")"
+        [[ "$volume_info" == *"[MUTED]"* ]] && current+=", muted"
+        actions=("Set volume${current:+ — currently $current}" "Raise volume by 5%" "Lower volume by 5%" "Toggle mute")
+        [[ -z "$default_kind" ]] || actions+=("Set as default")
+        choice="$(printf '%s\n' "${actions[@]}" | "$ROFI_SINGLE" -dmenu -p "$name" -l "${#actions[@]}" || true)"
+        [[ -n "$choice" ]] || return 0
+
+        case "$choice" in
+            Set\ volume*)
+                choose_volume "$kind" "$target" "$reference_id" "$name" || return 1
+                ;;
+            "Raise volume by 5%"|"Lower volume by 5%")
+                value="5%+"
+                [[ "$choice" == "Raise volume by 5%" ]] || value="5%-"
+                if [[ "$kind" == "pid" ]]; then
+                    wpctl set-volume --pid "$target" "$value"
+                else
+                    wpctl set-volume "$target" "$value"
+                fi || { notify "Could not adjust volume for $name."; return 1; }
+                ;;
+            "Toggle mute")
+                if [[ "$kind" == "pid" ]]; then
+                    wpctl set-mute --pid "$target" toggle
+                else
+                    wpctl set-mute "$target" toggle
+                fi || { notify "Could not toggle mute for $name."; return 1; }
+                ;;
+            "Set as default")
+                if ! wpctl set-default "$target"; then
+                    notify "Could not set $name as the default ${default_kind}."
+                    return 1
+                fi
+                notify "$name is now the default ${default_kind}."
+                ;;
+            *) return 0 ;;
+        esac
+    done
+}
+
+choose_device() {
+    local node_kind="$1" prompt="$2" listing
+    local id name _media_type current_marker _rest choice
+    local -a options=() ids=() names=()
+
+    if ! listing="$(wpctl list audio "$node_kind" 2>/dev/null)"; then
+        notify "Could not query audio devices. Check that PipeWire and WirePlumber are running."
+        return 1
+    fi
+    while IFS=$'\t' read -r id name _media_type current_marker _rest; do
+        [[ "$id" =~ ^[0-9]+$ && -n "$name" ]] || continue
+        name="${name//$'\r'/}"
+        [[ "$current_marker" == "*" ]] && name+="  (default)"
+        ids+=("$id")
+        names+=("$name")
+        options+=("$name  [$id]")
+    done <<< "$listing"
+    if ((${#options[@]} == 0)); then
+        notify "No ${prompt,,} devices were found."
+        return 0
+    fi
+
+    choice="$(printf '%s\n' "${options[@]}" | "$ROFI_SINGLE" -dmenu -p "$prompt" -l 10 || true)"
+    [[ -n "$choice" ]] || return 0
+    for id in "${!options[@]}"; do
+        if [[ "${options[$id]}" == "$choice" ]]; then
+            control_entity node "${ids[$id]}" "${ids[$id]}" "${names[$id]}" "$prompt device"
+            return
+        fi
+    done
+}
+
+choose_application() {
+    local listing choice target reference_id name
+    local -a targets=() references=() names=() options=()
+    if ! command -v pw-dump >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        notify "pw-dump and Python 3 are required to list application audio streams."
+        return 1
+    fi
+    if ! listing="$("$SCRIPT_DIR/audio-applications")"; then
+        notify "Could not read PipeWire application streams."
+        return 1
+    fi
+    while IFS=$'\t' read -r target reference_id name; do
+        [[ -n "$target" && "$reference_id" =~ ^[0-9]+$ && -n "$name" ]] || continue
+        targets+=("$target")
+        references+=("$reference_id")
+        names+=("$name")
+        options+=("$name  [$target]")
+    done <<< "$listing"
+    if ((${#options[@]} == 0)); then
+        notify "No active application playback streams were found."
+        return 0
+    fi
+
+    choice="$(printf '%s\n' "${options[@]}" | "$ROFI_SINGLE" -dmenu -p "Application audio" -l 10 || true)"
+    [[ -n "$choice" ]] || return 0
+    for target in "${!options[@]}"; do
+        if [[ "${options[$target]}" == "$choice" ]]; then
+            if [[ "${targets[$target]}" == pid:* ]]; then
+                control_entity pid "${targets[$target]#pid:}" "${references[$target]}" "${names[$target]}"
+            else
+                control_entity node "${targets[$target]#node:}" "${references[$target]}" "${names[$target]}"
+            fi
+            return
+        fi
+    done
+}
+
+choice="$(printf '%s\n' \
+    "Output device" \
+    "Input device" \
+    "Application volume" \
+    | "$ROFI_SINGLE" -dmenu -p "Audio" -l 3 || true)"
+
+case "$choice" in
+    "Output device") choose_device sinks Output ;;
+    "Input device") choose_device sources Input ;;
+    "Application volume") choose_application ;;
+    *) exit 0 ;;
+esac

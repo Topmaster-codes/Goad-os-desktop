@@ -1,0 +1,28 @@
+# Run with: cargo deny check licenses
+#
+# This allow-list covers the licenses that can be combined with a
+# GPL-3.0-or-later project. Any crate under a license not listed here is
+# reported, so you can review it by hand.
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "GPL-3.0-or-later",
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    # Dynamically linked system libraries (for example libpulse bindings).
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+]

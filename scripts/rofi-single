@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+if command -v rofi-wayland >/dev/null 2>&1; then
+    ROFI_BIN="$(command -v rofi-wayland)"
+elif command -v rofi >/dev/null 2>&1; then
+    ROFI_BIN="$(command -v rofi)"
+else
+    printf 'Rofi is not installed. Install rofi-wayland for native Wayland support.\n' >&2
+    exit 127
+fi
+
+if ! command -v flock >/dev/null 2>&1; then
+    printf 'flock is required for safe single-instance Rofi launching (install util-linux).\n' >&2
+    exit 127
+fi
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+THEME="$CONFIG_DIR/rofi/amane.rasi"
+THEME_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/amane/theme"
+if [[ -r "$THEME_STATE" ]] && [[ "$(<"$THEME_STATE")" == "ragebait-red" ]]; then
+    RED_THEME="$CONFIG_DIR/rofi/amane-red.rasi"
+    [[ -r "$RED_THEME" ]] && THEME="$RED_THEME"
+fi
+if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    RUNTIME_DIR="$XDG_RUNTIME_DIR/deep-current"
+else
+    RUNTIME_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/deep-current"
+fi
+mkdir -p "$RUNTIME_DIR"
+
+exec 9>"$RUNTIME_DIR/rofi.lock"
+flock -n 9 || exit 0
+if command -v pgrep >/dev/null 2>&1 \
+    && { pgrep -u "${UID:-$(id -u)}" -x rofi >/dev/null 2>&1 \
+        || pgrep -u "${UID:-$(id -u)}" -x rofi-wayland >/dev/null 2>&1; }; then
+    exit 0
+fi
+
+exec "$ROFI_BIN" -theme "$THEME" "$@"
