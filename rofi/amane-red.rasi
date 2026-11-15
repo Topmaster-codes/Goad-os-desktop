@@ -6,6 +6,7 @@ configuration {
     display-run: "Run";
     display-window: "Windows";
     font: "JetBrainsMono Nerd Font 10";
+    click-to-exit: false;
 }
 
 * {

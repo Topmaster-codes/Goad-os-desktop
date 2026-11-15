@@ -13,7 +13,7 @@ hl.monitor({
 
 hl.config({
     render = {
-        direct_scanout = 0, -- 0 completely disables direct scanout
+        direct_scanout = 1, -- 0 completely disables direct scanout
         cm_auto_hdr = 0,    -- 0 prevents automatic HDR/color profile shifting in fullscreen
     }
 })
