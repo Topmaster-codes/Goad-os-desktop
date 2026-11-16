@@ -31,19 +31,32 @@ Hyprland config is not Lua, follow the message from the installer and add the
 integration in the appropriate config.
 
 Press `Super+W` to open the wallpaper and theme picker. It can apply one image
-to all monitors or choose a monitor and assign it its own image from
-`~/Pictures/wallpapers`. Per-monitor assignments and the all-monitor fallback
-are restored at login. The picker also switches the Rofi menus between Default
-Blue and Ragebait Red; the theme updates the Amane bar, Mako notifications,
-and Kitty colors. Wallpaper and theme selections are saved under
+or video to all monitors or choose a monitor and assign it its own image or
+video from `~/Pictures/wallpapers`. Per-monitor assignments and the all-monitor
+fallback are restored at login. The picker also switches the Rofi menus between
+Default Blue and Ragebait Red; the theme updates the Amane bar, Mako
+notifications, and Kitty colors. Wallpaper and theme selections are saved under
 `~/.local/state/amane`.
+
+Videos (MP4, MKV, WebM, MOV, AVI, M4V, and GIF) appear in the same list as
+images, marked `[video]`, and are played by `mpvpaper`. Images keep using
+Hyprpaper, and the two can be mixed across monitors. Picking an image for a
+monitor stops the video playing on it. Videos play silently, loop, and crop to
+fill the monitor. Set `AMANE_MPVPAPER_OPTIONS` (default
+`no-audio loop-file=inf panscan=1.0`) to change the mpv options, or
+`AMANE_MPVPAPER_ARGS` to pass extra mpvpaper flags such as `--auto-pause` to
+save power while the wallpaper is hidden. Export either from your Hyprland
+config. Monitors plugged in after login do not get the video until you pick it
+again. Output goes to `mpvpaper.log` in the runtime directory
+(`$XDG_RUNTIME_DIR`).
 
 Rust/Cargo and a working Hyprland Lua setup are required to build and use the
 bar. The first build downloads Rust crate dependencies, so it needs an internet
 connection and the system development libraries for Fontconfig, PulseAudio,
 Wayland, and Vulkan. Menus and services use Rofi (preferably `rofi-wayland`), Mako, Hyprpaper,
 Hyprland utilities, PipeWire/WirePlumber (`wpctl` and `pw-dump`), Python 3,
-`flock`, and standard shell utilities. Optional themes are for Fastfetch,
+`flock`, and standard shell utilities. `mpvpaper` is optional and only needed
+for video wallpapers. Optional themes are for Fastfetch,
 Qt5CT/Qt6CT, and HyprFM. The main-monitor picker also uses `xrandr` from
 `xorg-xrandr`.
 

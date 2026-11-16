@@ -206,3 +206,4 @@ fi
 printf '\nAmane is installed at %s. Log out and back in to load the Hyprland integration.\n' "$BIN_HOME/amane-shell"
 printf 'Backups (when replacements were needed): %s\n' "$BACKUP_ROOT"
 printf 'Install runtime tools such as rofi-wayland, mako, hyprpaper, xorg-xrandr, PipeWire/WirePlumber, and Python 3 if they are missing.\n'
+printf 'Install mpvpaper as well if you want video wallpapers in the wallpaper picker.\n'

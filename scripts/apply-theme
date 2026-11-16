@@ -12,7 +12,13 @@ KITTY_CONFIG_DIR="$CONFIG_HOME/kitty"
 KITTY_CONFIG="$KITTY_CONFIG_DIR/kitty.conf"
 ACTIVE_KITTY_CONFIG="$KITTY_CONFIG_DIR/amane-theme.conf"
 
-theme="$(<"$THEME_STATE" 2>/dev/null || true)"
+# Read the state with a plain redirect. "$(<file 2>/dev/null || true)" looks
+# equivalent but always yields an empty string, which silently selected the
+# default blue theme no matter what had been saved.
+theme=''
+if [[ -r "$THEME_STATE" ]]; then
+    IFS= read -r theme <"$THEME_STATE" || true
+fi
 case "$theme" in
     ragebait-red) source_config="$AMANE_DIR/mako-red.conf" ;;
     *) source_config="$AMANE_DIR/mako.conf" ;;
