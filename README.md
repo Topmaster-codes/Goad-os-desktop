@@ -167,6 +167,7 @@ Goad-os as ive been repeating is an evolving project. The following areas repres
 - [ ] Improve Rofi menu integration and consistency.
 - [ ] Refine the Hyprland desktop experience.
 - [ ] Develop a cohesive themeing engine.
+- [ ] Add a low hz mode to slow down some animations (like apple does) to make them smoother (my monitor is 300hz)
 
 ### System Integration
 - [ ] Improve system configuration and usability.

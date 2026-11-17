@@ -15,6 +15,17 @@ notify() {
     fi
 }
 
+# Print the first line of a state file, or nothing if it is missing.
+# "$(<file 2>/dev/null || true)" looks equivalent but always yields an empty
+# string: bash only reads the file for a bare "$(<file)".
+read_state() {
+    local file="$1" value=''
+    if [[ -r "$file" ]]; then
+        IFS= read -r value <"$file" || true
+    fi
+    printf '%s' "$value"
+}
+
 hypr_monitor_exists() {
     local monitor="$1" output
     output="$(hyprctl -j monitors 2>/dev/null)" || return 1
@@ -71,7 +82,7 @@ apply_monitor() {
 }
 
 if [[ "${1:-}" == "--apply-saved" ]]; then
-    monitor="$(<"$MONITOR_STATE" 2>/dev/null || true)"
+    monitor="$(read_state "$MONITOR_STATE")"
     [[ -n "$monitor" ]] || exit 0
     for _attempt in {1..40}; do
         if apply_monitor "$monitor" false; then
@@ -107,7 +118,7 @@ fi
 mapfile -t xrandr_outputs < <(awk '$2 == "connected" { print $1 }' <<<"$xrandr_json")
 xrandr_primary="$(awk '$2 == "connected" { for (i = 3; i <= NF; i++) if ($i == "primary") { print $1; exit } }' <<<"$xrandr_json")"
 
-saved_monitor="$(<"$MONITOR_STATE" 2>/dev/null || true)"
+saved_monitor="$(read_state "$MONITOR_STATE")"
 declare -a monitor_names=() labels=()
 while IFS=$'\t' read -r name description focused; do
     [[ -n "$name" ]] || continue
@@ -149,7 +160,7 @@ if [[ -z "$selected" ]]; then
     exit 1
 fi
 
-previous_monitor="$(<"$MONITOR_STATE" 2>/dev/null || true)"
+previous_monitor="$(read_state "$MONITOR_STATE")"
 if ! save_monitor_state "$selected"; then
     notify 'Could not save the selected monitor preference.'
     exit 1

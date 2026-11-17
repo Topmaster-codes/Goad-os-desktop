@@ -9,6 +9,10 @@ THEME_STATE="$STATE_DIR/theme"
 WALLPAPER_STATE="$STATE_DIR/wallpaper"
 MONITOR_WALLPAPER_STATE_DIR="$STATE_DIR/wallpapers-by-monitor"
 
+# Shared helpers: state reading and mpvpaper (video wallpaper) management.
+# shellcheck source=wallpaper-lib
+source "$SCRIPT_DIR/wallpaper-lib"
+
 notify() {
     if command -v notify-send >/dev/null 2>&1; then
         notify-send "Wallpaper picker" "$1"
@@ -32,7 +36,7 @@ if ! command -v rofi-wayland >/dev/null 2>&1 && ! command -v rofi >/dev/null 2>&
     exit 1
 fi
 
-current_theme="$(<"$THEME_STATE" 2>/dev/null || true)"
+current_theme="$(read_state "$THEME_STATE")"
 if [[ "$current_theme" == "ragebait-red" ]]; then
     blue_label="Theme: Default Blue"
     red_label="Theme: Ragebait Red (current)"
@@ -85,7 +89,7 @@ case "$choice" in
         while IFS=$'\t' read -r monitor_name description focused; do
             [[ "$monitor_name" =~ ^[A-Za-z0-9_.:-]+$ ]] || continue
             monitor_state="$MONITOR_WALLPAPER_STATE_DIR/$monitor_name"
-            current_wallpaper="$(<"$monitor_state" 2>/dev/null || true)"
+            current_wallpaper="$(read_state "$monitor_state")"
             marker=''
             if [[ -n "$current_wallpaper" ]]; then
                 marker="  [$(basename -- "$current_wallpaper")]"
@@ -118,7 +122,7 @@ case "$choice" in
 esac
 
 if ! command -v hyprctl >/dev/null 2>&1; then
-    notify "hyprctl was not found. Wallpaper selection requires Hyprland and Hyprpaper."
+    notify "hyprctl was not found. Wallpaper selection requires Hyprland."
     exit 1
 fi
 
@@ -129,16 +133,22 @@ fi
 
 declare -a files=() labels=()
 while IFS= read -r -d '' file; do
+    if wallpaper_is_video "$file"; then
+        # Videos share the list with images; the suffix tells them apart.
+        files+=("$file")
+        labels+=("${file#"$WALLPAPER_DIR"/}  [video]")
+        continue
+    fi
     case "${file,,}" in
         *.png|*.jpg|*.jpeg|*.webp|*.bmp|*.avif)
             files+=("$file")
             labels+=("${file#"$WALLPAPER_DIR"/}")
             ;;
     esac
-done < <(find "$WALLPAPER_DIR" -type f -print0 2>/dev/null)
+done < <(find "$WALLPAPER_DIR" -type f -print0 2>/dev/null | sort -z)
 
 if ((${#files[@]} == 0)); then
-    notify "No supported images found in $WALLPAPER_DIR. Add PNG, JPG, WebP, BMP, or AVIF files."
+    notify "No supported wallpapers found in $WALLPAPER_DIR. Add images (PNG, JPG, WebP, BMP, AVIF) or videos (MP4, MKV, WebM, MOV, AVI, M4V, GIF)."
     exit 0
 fi
 
@@ -163,6 +173,60 @@ if [[ -z "$selected" || ! -f "$selected" ]]; then
     exit 1
 fi
 
+if wallpaper_is_video "$selected"; then
+    if ! command -v mpvpaper >/dev/null 2>&1; then
+        notify "mpvpaper is not installed. Install it to use video wallpapers."
+        exit 1
+    fi
+
+    if [[ -n "$target_monitor" ]]; then
+        video_monitors=("$target_monitor")
+    else
+        monitor_json="$(hyprctl -j monitors 2>/dev/null || true)"
+        if ! jq -e 'type == "array" and length > 0' <<<"$monitor_json" >/dev/null 2>&1; then
+            notify 'Hyprland did not report any active monitors.'
+            exit 1
+        fi
+        mapfile -t video_monitors < <(jq -r '.[].name' <<<"$monitor_json")
+    fi
+
+    for monitor_name in "${video_monitors[@]}"; do
+        if ! mpvpaper_start "$monitor_name" "$selected"; then
+            notify "Could not start a video wallpaper on $monitor_name."
+            exit 1
+        fi
+    done
+
+    # mpvpaper exits right away when it cannot start (bad arguments, no layer
+    # shell, unreadable file), so a short wait catches most failures.
+    sleep 1
+    for monitor_name in "${video_monitors[@]}"; do
+        if ! mpvpaper_running "$monitor_name"; then
+            notify "mpvpaper stopped right after starting on $monitor_name. See $MPVPAPER_LOG."
+            exit 1
+        fi
+    done
+
+    video_name="${selected#"$WALLPAPER_DIR"/}"
+    if [[ -n "$target_monitor" ]]; then
+        if ! save_state "$MONITOR_WALLPAPER_STATE_DIR/$target_monitor" "$selected"; then
+            notify "Video wallpaper started on $target_monitor, but the selection could not be saved."
+            exit 1
+        fi
+        notify "Video wallpaper changed on $target_monitor to $video_name and saved."
+    else
+        if ! save_state "$WALLPAPER_STATE" "$selected"; then
+            notify 'Video wallpaper started, but the selection could not be saved for the next login.'
+            exit 1
+        fi
+        if [[ -d "$MONITOR_WALLPAPER_STATE_DIR" ]]; then
+            find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -delete
+        fi
+        notify "Video wallpaper changed on all monitors to $video_name and saved."
+    fi
+    exit 0
+fi
+
 if ! pgrep -u "${UID:-$(id -u)}" -x hyprpaper >/dev/null 2>&1; then
     if ! command -v hyprpaper >/dev/null 2>&1; then
         notify "Hyprpaper is not installed."
@@ -177,6 +241,8 @@ fi
 
 if [[ -n "$target_monitor" ]]; then
     if hyprctl hyprpaper wallpaper "${target_monitor},${selected},cover" >/dev/null 2>&1; then
+        # A video playing on this monitor would stay on top of the image.
+        mpvpaper_stop "$target_monitor"
         if ! save_state "$MONITOR_WALLPAPER_STATE_DIR/$target_monitor" "$selected"; then
             notify "Wallpaper changed on $target_monitor, but the selection could not be saved."
             exit 1
@@ -203,6 +269,8 @@ else
             exit 1
         fi
     done
+    # Videos on any monitor would stay on top of the new image.
+    mpvpaper_stop_all
     if ! save_state "$WALLPAPER_STATE" "$selected"; then
         notify 'Wallpaper changed, but the selection could not be saved for the next login.'
         exit 1

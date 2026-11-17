@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# shellcheck shell=bash
+#
+# Shared helpers for the wallpaper picker (wallpaper-menu) and the login
+# restore (start-amane-services). Source this file; do not execute it.
+#
+# Static images are applied through Hyprpaper. Video wallpapers are played by
+# mpvpaper, one process per monitor, tracked with a PID file so one monitor's
+# video can be replaced or stopped without touching the others.
+
+RUNTIME_DIR="${RUNTIME_DIR:-${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/amane}}"
+MPVPAPER_DIR="$RUNTIME_DIR/amane-mpvpaper"
+MPVPAPER_LOG="$RUNTIME_DIR/mpvpaper.log"
+
+# mpv options used for video wallpapers: no sound, loop forever, and crop to
+# fill the monitor (the video counterpart of the "cover" mode used for images).
+# Override with AMANE_MPVPAPER_OPTIONS. Extra mpvpaper flags, such as
+# --auto-pause to save power while the wallpaper is hidden, go in
+# AMANE_MPVPAPER_ARGS. Both can be exported from the Hyprland config.
+MPVPAPER_DEFAULT_MPV_OPTIONS='no-audio loop-file=inf panscan=1.0'
+
+# Print the first line of a state file, or nothing if it is missing.
+#
+# Use this instead of "$(<file 2>/dev/null || true)": bash only reads the file
+# for a bare "$(<file)", and returns an empty string for anything more complex
+# (an extra redirection or "|| true" turns it into a command with no name).
+read_state() {
+    local file="$1" value=''
+    if [[ -r "$file" ]]; then
+        IFS= read -r value <"$file" || true
+    fi
+    printf '%s' "$value"
+}
+
+# Succeeds when the path looks like something mpvpaper should play rather than
+# a still image for Hyprpaper.
+wallpaper_is_video() {
+    case "${1,,}" in
+        *.mp4|*.mkv|*.webm|*.mov|*.avi|*.m4v|*.gif) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+mpvpaper_pidfile() {
+    printf '%s/%s.pid' "$MPVPAPER_DIR" "$1"
+}
+
+# Print the PID of the mpvpaper tracked for a monitor, if it is still running.
+# The command line is checked too, so a recycled PID is never mistaken for it.
+mpvpaper_pid() {
+    local pid args
+    pid="$(read_state "$(mpvpaper_pidfile "$1")")"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    [[ "$args" == *mpvpaper* ]] || return 1
+    printf '%s' "$pid"
+}
+
+mpvpaper_running() {
+    mpvpaper_pid "$1" >/dev/null
+}
+
+# Stop the video wallpaper on one monitor. Safe to call when none is running.
+mpvpaper_stop() {
+    local monitor="$1" pid _attempt
+    if pid="$(mpvpaper_pid "$monitor")"; then
+        kill "$pid" 2>/dev/null || true
+        for _attempt in {1..20}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    fi
+    rm -f -- "$(mpvpaper_pidfile "$monitor")"
+}
+
+# Stop every video wallpaper this session started.
+mpvpaper_stop_all() {
+    local pidfile monitor
+    [[ -d "$MPVPAPER_DIR" ]] || return 0
+    for pidfile in "$MPVPAPER_DIR"/*.pid; do
+        [[ -e "$pidfile" ]] || continue
+        monitor="${pidfile##*/}"
+        mpvpaper_stop "${monitor%.pid}"
+    done
+}
+
+# Play a video on one monitor, replacing any video already running there.
+# Returns once mpvpaper is launched; use mpvpaper_running after a short wait to
+# find out whether it stayed up.
+mpvpaper_start() {
+    local monitor="$1" file="$2" pid
+    local -a extra_args=()
+    # The monitor name becomes a file name, so refuse anything unusual.
+    [[ "$monitor" =~ ^[A-Za-z0-9_.:-]+$ ]] || return 1
+    mpvpaper_stop "$monitor"
+    mkdir -p -- "$MPVPAPER_DIR"
+    read -r -a extra_args <<<"${AMANE_MPVPAPER_ARGS:-}" || true
+    mpvpaper "${extra_args[@]}" \
+        -o "${AMANE_MPVPAPER_OPTIONS:-$MPVPAPER_DEFAULT_MPV_OPTIONS}" \
+        "$monitor" "$file" >>"$MPVPAPER_LOG" 2>&1 &
+    pid=$!
+    disown "$pid" 2>/dev/null || true
+    printf '%s\n' "$pid" >"$(mpvpaper_pidfile "$monitor")"
+}

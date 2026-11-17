@@ -44,62 +44,111 @@ if command -v hyprpaper >/dev/null 2>&1 && ! pgrep -u "${UID:-$(id -u)}" -x hypr
 fi
 
 # Restore the global fallback first, then per-monitor choices override it.
-WALLPAPER_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/amane/wallpaper"
-MONITOR_WALLPAPER_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/amane/wallpapers-by-monitor"
-SAVED_MONITOR_STATE="$(find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
-if { [[ -r "$WALLPAPER_STATE" ]] || [[ -n "$SAVED_MONITOR_STATE" ]]; } \
-    && command -v hyprpaper >/dev/null 2>&1 \
-    && command -v hyprctl >/dev/null 2>&1; then
-    # Hyprpaper's IPC socket may appear several seconds after its process.
-    ready=0
-    for _attempt in {1..60}; do
-        if hyprctl hyprpaper listactive >/dev/null 2>&1; then
-            ready=1
-            break
-        fi
-        sleep 0.5
-    done
+# A state file holds the wallpaper's path, so its extension decides whether it
+# is restored through Hyprpaper (images) or mpvpaper (videos).
+# shellcheck source=wallpaper-lib
+source "$AMANE_DIR/scripts/wallpaper-lib"
 
-    if (( ready == 0 )); then
-        printf 'Could not restore saved wallpapers: Hyprpaper IPC did not become available.\n' \
-            >>"$RUNTIME_DIR/hyprpaper.log"
-    else
-        if [[ -r "$WALLPAPER_STATE" ]]; then
-            wallpaper="$(<"$WALLPAPER_STATE" 2>/dev/null || true)"
-            if [[ -f "$wallpaper" ]]; then
-                if ! hyprctl hyprpaper wallpaper ",${wallpaper},cover" >>"$RUNTIME_DIR/hyprpaper.log" 2>&1; then
-                    printf 'Could not restore fallback wallpaper: %s\n' "$wallpaper" \
-                        >>"$RUNTIME_DIR/hyprpaper.log"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/amane"
+WALLPAPER_STATE="$STATE_DIR/wallpaper"
+MONITOR_WALLPAPER_STATE_DIR="$STATE_DIR/wallpapers-by-monitor"
+
+global_wallpaper="$(read_state "$WALLPAPER_STATE")"
+declare -A monitor_wallpapers=()
+if [[ -d "$MONITOR_WALLPAPER_STATE_DIR" ]]; then
+    while IFS= read -r -d '' monitor_state; do
+        monitor="${monitor_state##*/}"
+        [[ "$monitor" =~ ^[A-Za-z0-9_.:-]+$ ]] || continue
+        monitor_wallpapers["$monitor"]="$(read_state "$monitor_state")"
+    done < <(find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -print0 2>/dev/null)
+fi
+
+if { [[ -n "$global_wallpaper" ]] || (( ${#monitor_wallpapers[@]} > 0 )); } \
+    && command -v hyprctl >/dev/null 2>&1; then
+    want_images=0
+    want_videos=0
+    for wallpaper in "$global_wallpaper" "${monitor_wallpapers[@]}"; do
+        [[ -n "$wallpaper" ]] || continue
+        if wallpaper_is_video "$wallpaper"; then want_videos=1; else want_images=1; fi
+    done
+    monitors="$(hyprctl -j monitors 2>/dev/null || true)"
+
+    if (( want_images )) && command -v hyprpaper >/dev/null 2>&1; then
+        # Hyprpaper's IPC socket may appear several seconds after its process.
+        ready=0
+        for _attempt in {1..60}; do
+            if hyprctl hyprpaper listactive >/dev/null 2>&1; then
+                ready=1
+                break
+            fi
+            sleep 0.5
+        done
+
+        if (( ready == 0 )); then
+            printf 'Could not restore saved wallpapers: Hyprpaper IPC did not become available.\n' \
+                >>"$RUNTIME_DIR/hyprpaper.log"
+        else
+            if [[ -n "$global_wallpaper" ]] && ! wallpaper_is_video "$global_wallpaper"; then
+                if [[ -f "$global_wallpaper" ]]; then
+                    if ! hyprctl hyprpaper wallpaper ",${global_wallpaper},cover" >>"$RUNTIME_DIR/hyprpaper.log" 2>&1; then
+                        printf 'Could not restore fallback wallpaper: %s\n' "$global_wallpaper" \
+                            >>"$RUNTIME_DIR/hyprpaper.log"
+                    fi
+                else
+                    printf 'Saved wallpaper is missing: %s\n' "$global_wallpaper" >>"$RUNTIME_DIR/hyprpaper.log"
                 fi
-            else
-                printf 'Saved wallpaper is missing: %s\n' "$wallpaper" >>"$RUNTIME_DIR/hyprpaper.log"
+            fi
+
+            if command -v jq >/dev/null 2>&1; then
+                for monitor in "${!monitor_wallpapers[@]}"; do
+                    wallpaper="${monitor_wallpapers[$monitor]}"
+                    if wallpaper_is_video "$wallpaper"; then
+                        continue
+                    fi
+                    if [[ ! -f "$wallpaper" ]]; then
+                        printf 'Saved wallpaper for %s is missing: %s\n' "$monitor" "$wallpaper" \
+                            >>"$RUNTIME_DIR/hyprpaper.log"
+                        continue
+                    fi
+                    if ! jq -e --arg monitor "$monitor" 'any(.[]; .name == $monitor)' \
+                        <<<"$monitors" >/dev/null 2>&1; then
+                        printf 'Saved wallpaper monitor is not connected: %s\n' "$monitor" \
+                            >>"$RUNTIME_DIR/hyprpaper.log"
+                        continue
+                    fi
+                    if ! hyprctl hyprpaper wallpaper "${monitor},${wallpaper},cover" \
+                        >>"$RUNTIME_DIR/hyprpaper.log" 2>&1; then
+                        printf 'Could not restore wallpaper for %s: %s\n' "$monitor" "$wallpaper" \
+                            >>"$RUNTIME_DIR/hyprpaper.log"
+                    fi
+                done
             fi
         fi
+    fi
 
-        if [[ -d "$MONITOR_WALLPAPER_STATE_DIR" ]] \
-            && command -v jq >/dev/null 2>&1; then
-            monitors="$(hyprctl -j monitors 2>/dev/null || true)"
-            while IFS= read -r -d '' monitor_state; do
-                monitor="${monitor_state##*/}"
-                wallpaper="$(<"$monitor_state" 2>/dev/null || true)"
-                [[ "$monitor" =~ ^[A-Za-z0-9_.:-]+$ ]] || continue
+    # Videos start after the images so their surfaces are created on top of
+    # anything Hyprpaper drew. Each connected monitor plays its own saved video,
+    # or the global one when it has no override of its own.
+    if (( want_videos )); then
+        if ! command -v mpvpaper >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+            printf 'Could not restore video wallpapers: mpvpaper and jq are both required.\n' \
+                >>"$MPVPAPER_LOG"
+        else
+            while IFS= read -r monitor; do
+                wallpaper="${monitor_wallpapers[$monitor]:-$global_wallpaper}"
+                if [[ -z "$wallpaper" ]] || ! wallpaper_is_video "$wallpaper"; then
+                    continue
+                fi
                 if [[ ! -f "$wallpaper" ]]; then
-                    printf 'Saved wallpaper for %s is missing: %s\n' "$monitor" "$wallpaper" \
-                        >>"$RUNTIME_DIR/hyprpaper.log"
+                    printf 'Saved video wallpaper for %s is missing: %s\n' "$monitor" "$wallpaper" \
+                        >>"$MPVPAPER_LOG"
                     continue
                 fi
-                if ! jq -e --arg monitor "$monitor" 'any(.[]; .name == $monitor)' \
-                    <<<"$monitors" >/dev/null 2>&1; then
-                    printf 'Saved wallpaper monitor is not connected: %s\n' "$monitor" \
-                        >>"$RUNTIME_DIR/hyprpaper.log"
-                    continue
+                if ! mpvpaper_start "$monitor" "$wallpaper"; then
+                    printf 'Could not restore video wallpaper for %s: %s\n' "$monitor" "$wallpaper" \
+                        >>"$MPVPAPER_LOG"
                 fi
-                if ! hyprctl hyprpaper wallpaper "${monitor},${wallpaper},cover" \
-                    >>"$RUNTIME_DIR/hyprpaper.log" 2>&1; then
-                    printf 'Could not restore wallpaper for %s: %s\n' "$monitor" "$wallpaper" \
-                        >>"$RUNTIME_DIR/hyprpaper.log"
-                fi
-            done < <(find "$MONITOR_WALLPAPER_STATE_DIR" -maxdepth 1 -type f -print0 2>/dev/null)
+            done < <(jq -r '.[].name' <<<"$monitors")
         fi
     fi
 fi
