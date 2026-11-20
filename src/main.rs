@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use amane::{
@@ -207,6 +208,18 @@ fn read_ram_percent() -> Option<u8> {
 // Keep the bar visible while the pointer is over the bar or notification
 // dropdown. Fullscreen clients suppress the top-edge trigger; otherwise reveal
 // from the 3px strip and hide when a client overlaps the bar area.
+//
+// A change only takes effect once it has held for its dwell time, so a pointer
+// that briefly slips off the bar does not make it flicker. REVEAL_DWELL is zero
+// by default (the edge trigger reveals immediately); raise it if the bar pops up
+// when you only meant to reach a tab strip or title bar at the top.
+const REVEAL_DWELL: Duration = Duration::ZERO;
+const HIDE_DWELL: Duration = Duration::from_millis(400);
+
+// Bottom edge of the bar in screen pixels. The shell script below gets this and
+// the reveal strip height from the same constants that place the bar.
+const BAR_BOTTOM: i32 = TOP_MARGIN + BAR_HEIGHT as i32;
+
 struct BarVisibility {
     visible: bool,
 }
@@ -222,13 +235,30 @@ impl Service for BarVisibility {
         Duration::from_millis(220)
     }
 
-    fn update(&mut self) -> bool {
-        let next = should_show_bar();
-        if next == self.visible {
-            return false;
+    // The default loop holds the service's write lock while update() runs, and
+    // bar() reads this service while drawing, so a slow Hyprland query would
+    // stall the bar. Ask first, and take the lock only to publish a change.
+    fn listen() {
+        let mut shown = Self::write().visible;
+        let mut pending: Option<Instant> = None;
+
+        loop {
+            thread::sleep(Self::interval());
+
+            let wanted = should_show_bar();
+            if wanted == shown {
+                pending = None;
+                continue;
+            }
+
+            let dwell = if wanted { REVEAL_DWELL } else { HIDE_DWELL };
+            let since = *pending.get_or_insert_with(Instant::now);
+            if since.elapsed() >= dwell {
+                shown = wanted;
+                pending = None;
+                Self::write().visible = wanted;
+            }
         }
-        self.visible = next;
-        true
     }
 }
 
@@ -239,29 +269,58 @@ fn should_show_bar() -> bool {
 
     const SCRIPT: &str = r#"
 set -u
-workspace="$(hyprctl -j activeworkspace 2>/dev/null | jq -r '.id // empty' 2>/dev/null || true)"
-cursor_y="$(hyprctl -j cursorpos 2>/dev/null | jq -r '.y // 999999' 2>/dev/null || true)"
-# If Hyprland or jq is temporarily unavailable, fail open (show the bar).
-if [ -z "$workspace" ]; then
+# BAR_REVEAL_PX and BAR_BOTTOM_PX come from TOP_MARGIN and the bar height in
+# main.rs. Fall back to the current layout if they are missing or not numbers.
+reveal="${BAR_REVEAL_PX:-3}"
+bottom="${BAR_BOTTOM_PX:-33}"
+case "$reveal$bottom" in
+    *[!0-9]*) reveal=3; bottom=33 ;;
+esac
+
+# If Hyprland is temporarily unavailable, fail open (show the bar).
+workspace_json="$(hyprctl -j activeworkspace 2>/dev/null || true)"
+if [ -z "$workspace_json" ]; then
     echo show
     exit 0
 fi
-
+cursor_json="$(hyprctl -j cursorpos 2>/dev/null || true)"
+[ -n "$cursor_json" ] || cursor_json='{"y": 999999}'
 clients="$(hyprctl -j clients 2>/dev/null || true)"
+
+# One jq pass answers three questions about the active workspace, in order:
+# is a client fullscreen, is the pointer in the top-edge strip, and does a client
+# overlap the bar area. Any failure (bad JSON, missing fields) leaves the answer
+# empty, which fails open below.
+answers="$(printf '%s\n' "$clients" | jq -r \
+    --argjson ws "$workspace_json" \
+    --argjson cur "$cursor_json" \
+    --argjson reveal "$reveal" \
+    --argjson bottom "$bottom" '
+    if $ws.id == null then error("no active workspace") else . end
+    | [ .[]
+        | select((.mapped // false) == true
+                 and (.hidden // false) == false
+                 and .workspace.id == $ws.id) ] as $on_workspace
+    | [
+        ($on_workspace | any(.[]; .fullscreen == true or .fullscreen == 2 or .fullscreen == 3)),
+        ((($cur.y // 999999) | floor) <= $reveal),
+        ($on_workspace | any(.[];
+            (.at[1] // 999999) < $bottom
+            and ((.at[1] // 0) + (.size[1] // 0)) > $reveal))
+      ]
+    | map(tostring) | join(" ")' 2>/dev/null || true)"
+set -- $answers
+if [ "$#" -ne 3 ]; then
+    echo show
+    exit 0
+fi
+fullscreen="$1"
+in_strip="$2"
+overlaps="$3"
 
 # A fullscreen client on the active workspace suppresses the edge trigger.
 # This prevents games from opening the bar when the pointer touches the top.
-if printf '%s\n' "$clients" | jq -e --argjson ws "$workspace" '
-    any(.[];
-        (.mapped // false) == true
-        and (.hidden // false) == false
-        and .workspace.id == $ws
-        and (
-            .fullscreen == true
-            or .fullscreen == 2
-            or .fullscreen == 3
-        )
-    )' >/dev/null 2>&1; then
+if [ "$fullscreen" = true ]; then
     echo hide
     exit 0
 fi
@@ -269,37 +328,31 @@ fi
 # Menus are Wayland layer surfaces and do not reliably appear in the Hyprland
 # client list. Keep the bar available for the full lifetime of any Rofi menu.
 if command -v pgrep >/dev/null 2>&1 \
-    && { pgrep -u "$(id -u)" -x rofi >/dev/null 2>&1 \
-        || pgrep -u "$(id -u)" -x rofi-wayland >/dev/null 2>&1; }; then
+    && pgrep -u "$(id -u)" -x 'rofi(-wayland)?' >/dev/null 2>&1; then
     echo show
     exit 0
 fi
 
-case "$cursor_y" in
-    ''|*[!0-9-]*) cursor_y=999999 ;;
-esac
-
-# Reveal the bar when the pointer reaches the 3px strip at the top edge.
-if [ "$cursor_y" -le 3 ]; then
+# Reveal the bar when the pointer reaches the strip at the top edge.
+if [ "$in_strip" = true ]; then
     echo show
     exit 0
 fi
 
-if printf '%s\n' "$clients" | jq -e --argjson ws "$workspace" '
-    any(.[];
-        (.mapped // false) == true
-        and (.hidden // false) == false
-        and .workspace.id == $ws
-        and (.at[1] // 999999) < 33
-        and ((.at[1] // 0) + (.size[1] // 0)) > 3
-    )' >/dev/null 2>&1; then
+if [ "$overlaps" = true ]; then
     echo hide
 else
     echo show
 fi
 "#;
 
-    let Ok(output) = Command::new("sh").arg("-c").arg(SCRIPT).output() else {
+    let Ok(output) = Command::new("sh")
+        .arg("-c")
+        .arg(SCRIPT)
+        .env("BAR_REVEAL_PX", TOP_MARGIN.to_string())
+        .env("BAR_BOTTOM_PX", BAR_BOTTOM.to_string())
+        .output()
+    else {
         return true;
     };
     let decision = String::from_utf8_lossy(&output.stdout);
