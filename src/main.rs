@@ -274,7 +274,7 @@ impl Service for BarVisibility {
     }
 
     fn interval() -> Duration {
-        Duration::from_millis(220)
+        Duration::from_millis(160)
     }
 
     // The default loop holds the service's write lock while update() runs, and
