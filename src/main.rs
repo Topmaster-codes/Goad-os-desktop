@@ -214,11 +214,53 @@ fn read_ram_percent() -> Option<u8> {
 // by default (the edge trigger reveals immediately); raise it if the bar pops up
 // when you only meant to reach a tab strip or title bar at the top.
 const REVEAL_DWELL: Duration = Duration::ZERO;
-const HIDE_DWELL: Duration = Duration::from_millis(400);
+const HIDE_DWELL: Duration = Duration::from_millis(250);
+
+// While a change is waiting out its dwell, check again this often instead of at
+// the normal interval, so the dwell is not rounded up to whole polling ticks.
+const PENDING_POLL: Duration = Duration::from_millis(60);
 
 // Bottom edge of the bar in screen pixels. The shell script below gets this and
 // the reveal strip height from the same constants that place the bar.
 const BAR_BOTTOM: i32 = TOP_MARGIN + BAR_HEIGHT as i32;
+
+// Hyprland slides the bar in by itself when it maps, but when the bar unmaps
+// there is nothing left for it to animate, so the hide is drawn here: the
+// surface stays mapped while the content slides up and fades, then unmaps.
+const HIDE_ANIMATION: Duration = Duration::from_millis(260);
+
+// 1.0 while the bar is shown (also the instant it is shown again, so the show
+// is left to Hyprland), falling to 0.0 over HIDE_ANIMATION once it is hidden.
+fn bar_hide_progress(shown: bool) -> f32 {
+    static HIDE_STARTED: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let mut started = HIDE_STARTED
+        .get_or_init(|| {
+            // start as if a hide already finished, so a bar that is hidden at
+            // launch does not flash
+            Mutex::new(Instant::now().checked_sub(HIDE_ANIMATION))
+        })
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if shown {
+        *started = None;
+        return 1.0;
+    }
+
+    let since = *started.get_or_insert_with(Instant::now);
+    let elapsed = (since.elapsed().as_secs_f32() / HIDE_ANIMATION.as_secs_f32()).min(1.0);
+
+    // smoothstep: eases out of the start and into the end
+    let progress = 1.0 - elapsed * elapsed * (3.0 - 2.0 * elapsed);
+
+    // keep drawing until the bar is gone; once it unmaps, a hidden window
+    // redraws on request at once, so stop asking
+    if progress > 0.001 {
+        request_frame();
+    }
+
+    progress
+}
 
 struct BarVisibility {
     visible: bool,
@@ -243,7 +285,11 @@ impl Service for BarVisibility {
         let mut pending: Option<Instant> = None;
 
         loop {
-            thread::sleep(Self::interval());
+            thread::sleep(if pending.is_some() {
+                PENDING_POLL
+            } else {
+                Self::interval()
+            });
 
             let wanted = should_show_bar();
             if wanted == shown {
@@ -1129,7 +1175,9 @@ fn clock_panel() -> Rectangle {
 }
 
 fn bar() -> LayerWindow {
-    let visible = BarVisibility::read().visible;
+    let shown = BarVisibility::read().visible;
+    let progress = bar_hide_progress(shown);
+    let visible = shown || progress > 0.001;
     let side_panels = Row::new(vec![Box::new(workspace_panel()), Box::new(status_panel())])
         .width(Parent)
         .height(Parent)
@@ -1166,6 +1214,8 @@ fn bar() -> LayerWindow {
                 .height(Parent)
                 .fill(Color::TRANSPARENT)
                 .child(content)
+                .opacity(progress.clamp(0.0, 1.0))
+                .translate(0.0, -BAR_HEIGHT * (1.0 - progress))
                 .on_hover(notification_bar_hover),
         )
 }
